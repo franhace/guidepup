@@ -213,51 +213,67 @@ export class NVDAClient extends EventEmitter {
       onError(new Error(ERR_NVDA_CANNOT_CONNECT, { cause }));
     });
 
+    // Messages are newline-delimited JSON, and a chunk can hold part of a
+    // message (one over a TLS record) or several.
+    let buffer = "";
+
     this.#socket.on("data", (data: string) => {
-      if (!data.trim().length) {
-        return;
+      buffer += data;
+
+      let newlineIndex: number;
+
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        const message = buffer.slice(0, newlineIndex);
+
+        buffer = buffer.slice(newlineIndex + 1);
+
+        this.#handleMessage(message);
       }
-
-      let parsedData: NVDABaseMessage;
-
-      try {
-        parsedData = JSON.parse(data);
-      } catch {
-        return;
-      }
-
-      if (isChannelJoinedMessage(parsedData)) {
-        this.emit(CHANNEL_JOINED);
-
-        return;
-      }
-
-      if (isCancelMessage(parsedData)) {
-        this.emit(CANCEL);
-
-        return;
-      }
-
-      if (!isSpeakMessage(parsedData)) {
-        return;
-      }
-
-      const spokenPhraseParts: string[] = [];
-
-      for (const spokenPhrasePart of parsedData.sequence) {
-        if (typeof spokenPhrasePart !== "string") {
-          continue;
-        }
-
-        spokenPhraseParts.push(
-          spokenPhrasePart.trim().replaceAll(/\s\s+/g, " "),
-        );
-      }
-
-      const spokenPhrase = spokenPhraseParts.join(", ");
-
-      this.emit(SPEAK, spokenPhrase);
     });
+  }
+
+  #handleMessage(message: string): void {
+    if (!message.trim().length) {
+      return;
+    }
+
+    let parsedData: NVDABaseMessage;
+
+    try {
+      parsedData = JSON.parse(message);
+    } catch {
+      return;
+    }
+
+    if (isChannelJoinedMessage(parsedData)) {
+      this.emit(CHANNEL_JOINED);
+
+      return;
+    }
+
+    if (isCancelMessage(parsedData)) {
+      this.emit(CANCEL);
+
+      return;
+    }
+
+    if (!isSpeakMessage(parsedData)) {
+      return;
+    }
+
+    const spokenPhraseParts: string[] = [];
+
+    for (const spokenPhrasePart of parsedData.sequence) {
+      if (typeof spokenPhrasePart !== "string") {
+        continue;
+      }
+
+      spokenPhraseParts.push(spokenPhrasePart.trim().replaceAll(/\s\s+/g, " "));
+    }
+
+    const spokenPhrase = spokenPhraseParts.join(", ");
+
+    this.emit(SPEAK, spokenPhrase);
   }
 
   /**

@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { ERR_NVDA_CANNOT_CONNECT, ERR_NVDA_NOT_INSTALLED } from "../errors";
 import { existsSync, readFileSync } from "fs";
 import { NVDA_HOST, NVDA_PORT } from "./constants";
+import { delay } from "../../delay";
 import { getGuidepupNVDAInstallationPath } from "./getGuidepupNVDAInstallationPath";
 import { Key } from "../Key";
 import { Modifiers } from "../Modifiers";
@@ -129,7 +130,7 @@ describe("NVDAClient", () => {
 
         if (json.type === "join") {
           clientSocket.write(
-            JSON.stringify({ type: "channel_joined", user_id: 1 }),
+            JSON.stringify({ type: "channel_joined", user_id: 1 }) + "\n",
           );
         }
       });
@@ -202,6 +203,73 @@ describe("NVDAClient", () => {
         expect(await speakEmittedPromise).toEqual(
           "test, test with extra spaces",
         );
+      });
+    });
+
+    describe("when NVDA sends several messages in one chunk", () => {
+      it("should emit an event for each message", async () => {
+        const cancelEmittedPromise = new Promise((resolve) => {
+          client.on("cancel", resolve);
+        });
+        const speakEmittedPromise = new Promise((resolve) => {
+          client.on("speak", resolve);
+        });
+
+        clientSocket.write(
+          JSON.stringify({ type: "cancel" }) +
+            "\n" +
+            JSON.stringify({ type: "speak", sequence: ["test"], priority: 1 }) +
+            "\n",
+        );
+
+        await cancelEmittedPromise;
+        expect(await speakEmittedPromise).toEqual("test");
+      });
+    });
+
+    describe("when NVDA sends a message split across chunks", () => {
+      it("should emit a single event once the message is complete", async () => {
+        const speakHandler = jest.fn();
+        const speakEmittedPromise = new Promise((resolve) => {
+          client.on("speak", (spokenPhrase) => {
+            speakHandler(spokenPhrase);
+            resolve(spokenPhrase);
+          });
+        });
+
+        const message =
+          JSON.stringify({ type: "speak", sequence: ["test"], priority: 1 }) +
+          "\n";
+
+        clientSocket.write(message.slice(0, 10));
+        await delay(50);
+
+        expect(speakHandler).not.toHaveBeenCalled();
+
+        clientSocket.write(message.slice(10));
+
+        expect(await speakEmittedPromise).toEqual("test");
+        expect(speakHandler).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe("when NVDA sends a message larger than a TLS record", () => {
+      it("should emit a speak event with the whole spoken phrase", async () => {
+        const speakEmittedPromise = new Promise((resolve) => {
+          client.on("speak", resolve);
+        });
+
+        const longPhrase = "word ".repeat(8_000).trim();
+
+        clientSocket.write(
+          JSON.stringify({
+            type: "speak",
+            sequence: [longPhrase],
+            priority: 1,
+          }) + "\n",
+        );
+
+        expect(await speakEmittedPromise).toEqual(longPhrase);
       });
     });
 
@@ -487,7 +555,7 @@ describe("NVDAClient", () => {
 
         if (json.type === "join") {
           clientSocket.write(
-            JSON.stringify({ type: "channel_joined", user_id: 1 }),
+            JSON.stringify({ type: "channel_joined", user_id: 1 }) + "\n",
           );
         }
       });
@@ -579,7 +647,7 @@ describe("NVDAClient", () => {
 
         if (json.type === "join") {
           clientSocket.write(
-            JSON.stringify({ type: "channel_joined", user_id: 1 }),
+            JSON.stringify({ type: "channel_joined", user_id: 1 }) + "\n",
           );
         }
       });
